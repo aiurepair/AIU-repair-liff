@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ระบบแจ้งซ่อมโรงเรียน</title>
+    <!-- Tailwind CSS สำหรับตกแต่งหน้าตาให้สวยงาม -->
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <!-- LINE LIFF SDK -->
+    <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+</head>
+<body class="bg-gray-50 font-sans">
+
+    <!-- Loading Screen -->
+    <div id="loading" class="flex flex-col items-center justify-center min-h-screen">
+        <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mb-4"></div>
+        <p class="text-gray-600">กำลังโหลดเข้าสู่ระบบ...</p>
+    </div>
+
+    <!-- Main Container -->
+    <div id="app" class="hidden max-w-md mx-auto min-h-screen bg-white shadow-lg flex flex-col">
+        
+        <!-- Header -->
+        <header class="bg-blue-600 text-white p-4 flex justify-between items-center">
+            <div>
+                <h1 class="font-bold text-lg" id="headerTitle">ระบบแจ้งซ่อม</h1>
+                <p class="text-xs text-blue-100" id="userName">กำลังโหลด...</p>
+            </div>
+            <span id="userRoleBadge" class="px-2.5 py-1 text-xs rounded-full bg-blue-700 font-medium"></span>
+        </header>
+
+        <!-- Content Area -->
+        <main class="flex-1 p-4 overflow-y-auto pb-20">
+
+            <!-- ================= ฝั่งผู้ใช้งานทั่วไป (User View) ================= -->
+            <div id="userView" class="hidden space-y-4">
+                <div class="bg-blue-50 border-l-4 border-blue-500 p-3 text-sm text-blue-700">
+                    กรอกข้อมูลรายละเอียดการชำรุดเพื่อให้ทีมช่างเข้าตรวจสอบได้รวดเร็วขึ้น
+                </div>
+
+                <form id="repairForm" class="space-y-3" onsubmit="submitRepair(event)">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">อาคาร / สถานที่</label>
+                        <input type="text" id="building" required class="mt-1 w-full p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500" placeholder="เช่น อาคาร 1, โรงอาหาร">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">ห้อง / ชั้น</label>
+                        <input type="text" id="room" required class="mt-1 w-full p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500" placeholder="เช่น ห้อง 302, ชั้น 2">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">อาการเสีย / รายละเอียด</label>
+                        <textarea id="issue" rows="3" required class="mt-1 w-full p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500" placeholder="ระบุอาการเสียให้ชัดเจน"></textarea>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">รูปภาพก่อนซ่อม</label>
+                        <input type="file" id="imageFile" accept="image/*" class="mt-1 w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
+                    </div>
+                    <button type="submit" id="submitBtn" class="w-full bg-blue-600 text-white py-2.5 rounded-lg font-medium hover:bg-blue-700 transition">ส่งเรื่องแจ้งซ่อม</button>
+                </form>
+
+                <hr class="my-4">
+
+                <h3 class="font-bold text-gray-800">ประวัติการแจ้งซ่อมของฉัน</h3>
+                <div id="myRepairList" class="space-y-3">
+                    <!-- รายการจะถูกแทรกตรงนี้ด้วย JavaScript -->
+                </div>
+            </div>
+
+            <!-- ================= ฝั่งทีมช่าง (Tech Dashboard) ================= -->
+            <div id="techView" class="hidden space-y-4">
+                <h3 class="font-bold text-gray-800 text-lg">รายการแจ้งซ่อมทั้งหมด (สำหรับช่าง)</h3>
+                <div id="techRepairList" class="space-y-3">
+                    <!-- รายการงานซ่อมทั้งหมด -->
+                </div>
+            </div>
+
+        </main>
+    </div>
+
+    <!-- Script ควบคุมการทำงาน -->
+    <script>
+        // !!! นำ Web App URL ของ Google Apps Script มาใส่ตรงนี้ !!!
+        const GAS_URL = "https://script.google.com/macros/s/AKfycbyR10zUPVTe9lgjQYIjMYVBvZ0xgOjPJK4A7I6U92qGt6wbFeumKXHt2xF3-OIyjAvoDA/exec";
+        const LIFF_ID = "ใส่_LINE_LIFF_ID_ที่นี่"; // ได้มาจากขั้นตอนสร้าง LIFF
+
+        let userProfile = {};
+        let currentUserRole = "user";
+
+        window.onload = async function() {
+            try {
+                await liff.init({ liffId: LIFF_ID });
+                if (!liff.isLoggedIn()) {
+                    liff.login();
+                    return;
+                }
+                userProfile = await liff.getProfile();
+                await checkUserRoleAndInit();
+            } catch (error) {
+                alert("LIFF Initialization failed: " + error);
+            }
+        };
+
+        // ตรวจสอบสิทธิ์ผู้ใช้จาก Backend
+        async function checkUserRoleAndInit() {
+            try {
+                const response = await fetch(GAS_URL, {
+                    method: "POST",
+                    body: JSON.stringify({
+                        action: "check_user",
+                        line_user_id: userProfile.userId,
+                        display_name: userProfile.displayName
+                    })
+                });
+                const result = await response.json();
+                if (result.status === "success") {
+                    const userData = result.data;
+                    currentUserRole = userData.role;
+
+                    // แสดงผล Header
+                    document.getElementById("userName").innerText = userData.display_name;
+                    document.getElementById("loading").classList.add("hidden");
+                    document.getElementById("app").classList.remove("hidden");
+
+                    if (currentUserRole === "tech") {
+                        document.getElementById("headerTitle").innerText = "ระบบจัดการงานช่าง";
+                        document.getElementById("userRoleBadge").innerText = "ช่างซ่อมบำรุง";
+                        document.getElementById("techView").classList.remove("hidden");
+                        loadTechRepairs();
+                    } else {
+                        document.getElementById("headerTitle").innerText = "แจ้งซ่อมโรงเรียน";
+                        document.getElementById("userRoleBadge").innerText = "ผู้ใช้งานทั่วไป";
+                        document.getElementById("userView").classList.remove("hidden");
+                        loadUserRepairs();
+                    }
+                }
+            } catch (error) {
+                console.error(error);
+                alert("ไม่สามารถเชื่อมต่อกับระบบฐานข้อมูลได้");
+            }
+        }
+
+        // ฟังก์ชันส่งเรื่องแจ้งซ่อม (ฝั่ง User)
+        async function submitRepair(event) {
+            event.preventDefault();
+            const submitBtn = document.getElementById("submitBtn");
+            submitBtn.disabled = true;
+            submitBtn.innerText = "กำลังอัปโหลดและส่งข้อมูล...";
+
+            const building = document.getElementById("building").value;
+            const room = document.getElementById("room").value;
+            const issue = document.getElementById("issue").value;
+            const fileInput = document.getElementById("imageFile");
+
+            let base64Image = "";
+            if (fileInput.files.length > 0) {
+                base64Image = await toBase64(fileInput.files[0]);
+            }
+
+            const payload = {
+                action: "create_repair",
+                reporter_line_id: userProfile.userId,
+                reporter_name: userProfile.displayName,
+                location_building: building,
+                location_room: room,
+                issue_detail: issue,
+                image_base64: base64Image
+            };
+
+            try {
+                const response = await fetch(GAS_URL, {
+                    method: "POST",
+                    body: JSON.stringify(payload)
+                });
+                const result = await response.json();
+                if (result.status === "success") {
+                    alert("ส่งเรื่องแจ้งซ่อมเรียบร้อยแล้ว!");
+                    document.getElementById("repairForm").reset();
+                    loadUserRepairs();
+                } else {
+                    alert("เกิดข้อผิดพลาด: " + result.message);
+                }
+            } catch (error) {
+                alert("ส่งข้อมูลไม่สำเร็จ กรุณาลองใหม่อีกครั้ง");
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.innerText = "ส่งเรื่องแจ้งซ่อม";
+            }
+        }
+
+        // โหลดประวัติงานซ่อมฝั่ง User
+        async function loadUserRepairs() {
+            try {
+                const res = await fetch(`${GAS_URL}?action=get_repairs&line_user_id=${userProfile.userId}&role=user`);
+                const json = await res.json();
+                const listDiv = document.getElementById("myRepairList");
+                listDiv.innerHTML = "";
+
+                if (json.data.length === 0) {
+                    listDiv.innerHTML = `<p class="text-gray-500 text-sm text-center py-4">ยังไม่มีประวัติการแจ้งซ่อม</p>`;
+                    return;
+                }
+
+                json.data.forEach(item => {
+                    listDiv.innerHTML += renderCard(item, false);
+                });
+            } catch (err) {
+                console.error(err);
+            }
+        }
+
+        // โหลดรายการงานซ่อมทั้งหมดฝั่ง Tech
+        async function loadTechRepairs() {
+            try {
+                const res = await fetch(`${GAS_URL}?action=get_repairs&line_user_id=${userProfile.userId}&role=tech`);
+                const json = await res.json();
+                const listDiv = document.getElementById("techRepairList");
+                listDiv.innerHTML = "";
+
+                if (json.data.length === 0) {
+                    listDiv.innerHTML = `<p class="text-gray-500 text-sm text-center py-4">ไม่มีรายการแจ้งซ่อมในระบบ</p>`;
+                    return;
+                }
+
+                json.data.forEach(item => {
+                    listDiv.innerHTML += renderCard(item, true);
+                });
+            } catch (err) {
+                console.error(err);
+            }
+        }
+
+        // ช่างกดอัปเดตสถานะงาน
+        async function updateStatus(repairId, newStatus) {
+            let imageBase64 = "";
+            if (newStatus === 'completed') {
+                const input = prompt("กรุณาแนบรูปหลังซ่อม (ถ้ามี ให้ข้ามหรือกด OK)");
+                // เพื่อความง่ายในโค้ดตัวอย่าง สามารถพัฒนาเพิ่มช่องอัปโหลดรูปหลังซ่อมในอนาคตได้
+            }
+
+            const payload = {
+                action: "update_status",
+                repair_id: repairId,
+                status: newStatus,
+                tech_line_id: userProfile.userId,
+                tech_name: userProfile.displayName
+            };
+
+            try {
+                const response = await fetch(GAS_URL, {
+                    method: "POST",
+                    body: JSON.stringify(payload)
+                });
+                const result = await response.json();
+                if (result.status === "success") {
+                    alert("อัปเดตสถานะสำเร็จ!");
+                    loadTechRepairs();
+                } else {
+                    alert("อัปเดตไม่สำเร็จ");
+                }
+            } catch (err) {
+                alert("เกิดข้อผิดพลาดในการเชื่อมต่อ");
+            }
+        }
+
+        // Component Card แสดงรายการ
+        function renderCard(item, isTech) {
+            let statusBadge = "";
+            let actionButton = "";
+
+            if (item.status === 'pending') {
+                statusBadge = `<span class="px-2 py-0.5 text-xs bg-yellow-100 text-yellow-800 rounded-full font-medium">รอรับเรื่อง</span>`;
+                if (isTech) {
+                    actionButton = `<button onclick="updateStatus(${item.id}, 'in_progress')" class="mt-2 w-full bg-amber-500 text-white text-xs py-1.5 rounded font-medium hover:bg-amber-600">รับงานซ่อมนี้</button>`;
+                }
+            } else if (item.status === 'in_progress') {
+                statusBadge = `<span class="px-2 py-0.5 text-xs bg-blue-100 text-blue-800 rounded-full font-medium">กำลังดำเนินการ</span>`;
+                if (isTech) {
+                    actionButton = `<button onclick="updateStatus(${item.id}, 'completed')" class="mt-2 w-full bg-green-600 text-white text-xs py-1.5 rounded font-medium hover:bg-green-700">1-คลิกยืนยันซ่อมเสร็จ</button>`;
+                }
+            } else {
+                statusBadge = `<span class="px-2 py-0.5 text-xs bg-green-100 text-green-800 rounded-full font-medium">ซ่อมเสร็จสิ้น</span>`;
+            }
+
+            return `
+                <div class="bg-white border border-gray-200 rounded-xl p-3 shadow-sm space-y-2 text-sm">
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <span class="font-bold text-gray-800">📍 ${item.location_building} (${item.location_room})</span>
+                            <p class="text-xs text-gray-500">ผู้แจ้ง: ${item.reporter_name || 'ไม่ระบุ'}</p>
+                        </div>
+                        ${statusBadge}
+                    </div>
+                    <p class="text-gray-600 bg-gray-50 p-2 rounded text-xs"><b>อาการ:</b> ${item.issue_detail}</p>
+                    ${item.image_before_url ? `<a href="${item.image_before_url}" target="_blank" class="text-blue-600 text-xs underline block">ดูรูปภาพก่อนซ่อม</a>` : ''}
+                    ${isTech && item.tech_name ? `<p class="text-xs text-gray-500">ช่างผู้ดูแล: ${item.tech_name}</p>` : ''}
+                    ${actionButton}
+                </div>
+            `;
+        }
+
+        // แปลงไฟล์รูปเป็น Base64
+        function toBase64(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.readAsDataURL(file);
+                reader.onload = () => resolve(reader.result);
+                reader.onerror = error => reject(error);
+            });
+        }
+    </script>
+</body>
+</html>
