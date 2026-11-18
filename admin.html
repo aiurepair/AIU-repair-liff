@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Dashboard - ระบบจัดการช่างซ่อม</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 min-h-screen p-6">
+    <div class="max-w-4xl mx-auto space-y-6">
+        
+        <!-- ส่วนแสดงรหัสประจำวันสำหรับช่าง -->
+        <div class="bg-white rounded-xl shadow-md p-6 border-l-4 border-blue-500">
+            <h2 class="text-xl font-bold text-gray-800 mb-2">🔑 รหัสลงทะเบียนช่างประจำวันนี้</h2>
+            <p class="text-gray-600 text-sm mb-4">แจ้งรหัสนี้ให้นักศึกษาฝ่ายช่างที่ต้องการลงทะเบียนเข้าใช้งานในวันนี้ (รหัสจะเปลี่ยนให้อัตโนมัติทุก 24 ชั่วโมง)</p>
+            <div class="flex items-center space-x-4">
+                <span id="dailyCodeDisplay" class="text-3xl font-mono font-bold bg-blue-50 text-blue-600 px-4 py-2 rounded-lg border border-blue-200">----</span>
+                <span id="codeDate" class="text-gray-500 text-sm">กำลังโหลด...</span>
+            </div>
+        </div>
+
+        <!-- ส่วนจัดการรายชื่อผู้ใช้และสิทธิ์ -->
+        <div class="bg-white rounded-xl shadow-md p-6">
+            <h1 class="text-2xl font-bold text-gray-800 mb-4">👥 จัดการสิทธิ์ผู้ใช้งานและช่าง</h1>
+            <p class="text-gray-600 mb-6">รายชื่อทั้งหมดในระบบ สามารถปรับเปลี่ยนสถานะสิทธิ์ได้ทันทีในกรณีฉุกเฉิน</p>
+            
+            <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="bg-gray-200 text-gray-700">
+                            <th class="p-3">ชื่อ (Display Name)</th>
+                            <th class="p-3">LINE User ID</th>
+                            <th class="p-3">สิทธิ์ปัจจุบัน</th>
+                            <th class="p-3 text-center">จัดการสิทธิ์</th>
+                        </tr>
+                    </thead>
+                    <tbody id="userTableBody">
+                        <tr><td colspan="4" class="p-4 text-center text-gray-500">กำลังโหลดข้อมูล...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const GAS_URL = "ใส่_WEB_APP_URL_ของ_GAS_ที่นี่";
+
+        // โหลดรหัสประจำวัน
+        async function loadDailyCode() {
+            try {
+                const res = await fetch(`${GAS_URL}?action=get_code`);
+                const result = await res.json();
+                if(result.status === "success") {
+                    document.getElementById("dailyCodeDisplay").innerText = result.code;
+                    document.getElementById("codeDate").innerText = `วันที่: ${result.date}`;
+                }
+            } catch (err) {
+                console.error(err);
+            }
+        }
+
+        // โหลดรายชื่อผู้ใช้ทั้งหมด
+        async function loadUsers() {
+            try {
+                const res = await fetch(`${GAS_URL}?action=get_users`);
+                const result = await res.json();
+                if(result.status === "success") {
+                    const tbody = document.getElementById("userTableBody");
+                    tbody.innerHTML = "";
+                    
+                    result.data.forEach(user => {
+                        let badge = '';
+                        if(user.role === 'admin') badge = '<span class="px-2 py-1 bg-red-100 text-red-600 rounded text-xs font-bold">Admin</span>';
+                        else if(user.role === 'tech') badge = '<span class="px-2 py-1 bg-green-100 text-green-600 rounded text-xs font-bold">ช่างซ่อม</span>';
+                        else badge = '<span class="px-2 py-1 bg-gray-100 text-gray-600 rounded text-xs">ผู้ใช้ทั่วไป</span>';
+
+                        tbody.innerHTML += `
+                            <tr class="border-b hover:bg-gray-50">
+                                <td class="p-3 font-medium">${user.display_name || 'ไม่ระบุชื่อ'}</td>
+                                <td class="p-3 text-sm text-gray-500 font-mono">${user.line_user_id}</td>
+                                <td class="p-3">${badge}</td>
+                                <td class="p-3 text-center space-x-1">
+                                    <button onclick="changeRole('${user.line_user_id}', 'user')" class="px-2 py-1 bg-gray-200 text-gray-700 rounded text-xs hover:bg-gray-300">เป็น User</button>
+                                    <button onclick="changeRole('${user.line_user_id}', 'tech')" class="px-2 py-1 bg-green-500 text-white rounded text-xs hover:bg-green-600">ตั้งเป็นช่าง</button>
+                                    <button onclick="changeRole('${user.line_user_id}', 'admin')" class="px-2 py-1 bg-red-500 text-white rounded text-xs hover:bg-red-600">ตั้งเป็น Admin</button>
+                                </td>
+                            </tr>
+                        `;
+                    });
+                }
+            } catch (err) {
+                console.error(err);
+            }
+        }
+
+        async function changeRole(lineUserId, newRole) {
+            if(!confirm(`ยืนยันการเปลี่ยนสิทธิ์เป็น [${newRole}] ใช่หรือไม่?`)) return;
+            const res = await fetch(`${GAS_URL}?action=update_role&line_user_id=${lineUserId}&role=${newRole}`);
+            const result = await res.json();
+            if(result.status === "success") {
+                alert("อัปเดตสิทธิ์สำเร็จ!");
+                loadUsers();
+            } else {
+                alert("เกิดข้อผิดพลาด");
+            }
+        }
+
+        loadDailyCode();
+        loadUsers();
+    </script>
+</body>
+</html>
